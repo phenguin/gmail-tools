@@ -4,107 +4,87 @@
 from __future__ import unicode_literals
 from __future__ import print_function
 
-from lxml import etree
 import argparse
+import os.path
+import pickle
 import re
 import sys
-import yaml
 
-from .ruleset import RuleSet
-from .ruleset import ruleset_to_etree
+from googleapiclient.discovery import build
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
 
-from .upload import get_gmail_service
-from .upload import upload_ruleset
-from .upload import prune_filters_not_in_ruleset
-from .upload import prune_labels_not_in_ruleset
+# If modifying these scopes, delete the file token.pickle.
+SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
 
+def get_gmail_service():
+  print('Credendtials from environ: {}'.format(os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')))
+  creds = None
+  # The file token.pickle stores the user's access and refresh tokens, and is
+  # created automatically when the authorization flow completes for the first
+  # time.
+  if os.path.exists('token.pickle'):
+    with open('token.pickle', 'rb') as token:
+      creds = pickle.load(token)
+      # If there are no (valid) credentials available, let the user log in.
+  if not creds or not creds.valid:
+    if creds and creds.expired and creds.refresh_token:
+      creds.refresh(Request())
+    else:
+      flow = InstalledAppFlow.from_client_secrets_file(
+          'credentials.json', SCOPES)
+      creds = flow.run_local_server()
+    # Save the credentials for the next run
+    with open('token.pickle', 'wb') as token:
+      pickle.dump(creds, token)
+
+  return build('gmail', 'v1', credentials=creds)
+
+
+class GmailService(object):
+  def __init__(self):
+    self._service = get_gmail_service()
+
+
+  def GetLabels(self):
+    # Call the Gmail API
+    results = self._service.users().labels().list(userId='me').execute()
+    labels = results.get('labels', [])
+    for label in labels:
+      yield label['name']
 
 """
-Produces Gmail filter XML files based on a more human-readable YAML spec.
+Performs basic bulk operations on gmail using oauth.
 """
-
-
-# Unicode support. <http://stackoverflow.com/questions/2890146>
-def construct_yaml_str(self, node):
-    return self.construct_scalar(node)
-
-
-yaml.Loader.add_constructor('tag:yaml.org,2002:str', construct_yaml_str)
-yaml.SafeLoader.add_constructor('tag:yaml.org,2002:str', construct_yaml_str)
-
-
-def ruleset_to_xml(ruleset, pretty_print=True, encoding='utf8'):
-    dom = ruleset_to_etree(ruleset)
-    chars = etree.tostring(
-        dom,
-        encoding=encoding,
-        pretty_print=pretty_print,
-        xml_declaration=True,
-    )
-    return chars.decode(encoding)
-
 
 def create_parser():
-    parser = argparse.ArgumentParser()
-    parser.set_defaults(action='xml')
-    parser.add_argument('-n', '--dry-run', action='store_true', default=False)
-    parser.add_argument('filename', metavar='FILE', default='-')
-    # Actions
-    parser.add_argument('--prune', dest='action', action='store_const', const='prune')
-    parser.add_argument('--sync', dest='action', action='store_const', const='upload_prune')
-    parser.add_argument('--upload', dest='action', action='store_const', const='upload')
-    parser.add_argument('--prune-labels', dest='action', action='store_const', const='prune_labels')
-    parser.add_argument('--ensure-labels', dest='action', action='store_const', const='ensure_labels')
-    # Options for --prune-labels
-    parser.add_argument('--only-matching', default=r'.*', metavar='REGEX')
-    parser.add_argument('--ignore-errors', action='store_true', default=False)
-    return parser
+  parser = argparse.ArgumentParser()
+  parser.set_defaults(action='query')
+  parser.add_argument('-n', '--dry-run', action='store_true', default=False)
+  # Actions
+  parser.add_argument('--query', dest='action', action='store_const', const='query')
+  parser.add_argument('--labels', dest='action', action='store_const', const='labels')
+  parser.add_argument('--archive', dest='action', action='store_const', const='archive')
+  return parser
 
-def handle(args, data):
-    ruleset = RuleSet.from_object(rule for rule in data if not rule.get('ignore'))
+def handle(args):
+  gmail = GmailService()
 
-    if args.action == 'xml':
-        print(ruleset_to_xml(ruleset))
-    elif args.action == 'upload':
-        upload_ruleset(ruleset, dry_run=args.dry_run)
-    elif args.action == 'prune':
-        gmail = get_gmail_service()
-        prune_filters_not_in_ruleset(ruleset, service=gmail, dry_run=args.dry_run)
-    elif args.action == 'upload_prune':
-        gmail = get_gmail_service()
-        upload_ruleset(ruleset, service=gmail, dry_run=args.dry_run)
-        prune_filters_not_in_ruleset(ruleset, service=gmail, dry_run=args.dry_run)
-    elif args.action == 'prune_labels':
-        gmail = get_gmail_service()
-        match = re.compile(args.only_matching).match if args.only_matching else None
-        prune_labels_not_in_ruleset(ruleset, service=gmail, match=match, dry_run=args.dry_run,
-                                    continue_on_http_error=args.ignore_errors)
-    else:
-        raise argparse.ArgumentError('%r not recognized' % args.action)
+  if args.action == 'query':
+    raise Exception("NYI")
+  elif args.action == 'labels':
+    for name in gmail.GetLabels():
+      print(name)
+  elif args.action == 'archive':
+    raise Exception("NYI")
+  else:
+    raise argparse.ArgumentError('%r not recognized' % args.action)
 
 
 
 def main():
-    args = create_parser().parse_args()
-
-    if args.filename == '-':
-        # raw_data = yaml.safe_load(sys.stdin)
-        raw_data = sys.stdin.read(1 << 16)
-    else:
-        with open(args.filename) as inputf:
-            raw_data = inputf.read(1 << 16)
-
-    # No yaml here, just strings on the input.
-    if args.action == 'ensure_labels':
-      print("HELLO THERE")
-      return
-
-    data = yaml.safe_load(raw_data)
-
-    if not isinstance(data, list):
-        data = [data]
-
-    return handle(args, data)
+  args = create_parser().parse_args()
+  return handle(args)
 
 if __name__ == '__main__':
-    main()
+  main()
