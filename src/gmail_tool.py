@@ -109,12 +109,12 @@ class GmailService(threading.local):
                       user_id='me'):
         remove_labels = remove_labels or []
         add_labels = add_labels or []
+        message_ids = list(message_ids)
         body = {
             'ids': message_ids,
             'removeLabelIds': remove_labels,
             'addLabelIds': add_labels,
         }
-        from inspect import getargspec
         self._service.users().messages().batchModify(
             userId=user_id, fields=fields, body=body)
         return len(message_ids)
@@ -354,7 +354,7 @@ def modify_messages_handler(gmail, query, add_labels, remove_labels, max_results
                 pool.submit(
                     gmail.ModifyMessages,
                     # FIXME: Generator expression instead?
-                    [m['id'] for m in batch if m is not None],
+                    (m['id'] for m in batch if m is not None),
                     add_labels=add_labels,
                     remove_labels=remove_labels)
 
