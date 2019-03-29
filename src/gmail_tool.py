@@ -109,9 +109,15 @@ class GmailService(threading.local):
                       user_id='me'):
         remove_labels = remove_labels or []
         add_labels = add_labels or []
-        return self._service.users().messages.batchModify(
-            userId=user_id, fields=fields, ids=message_ids,
-            addLabelIds=add_labels, removeLabelIds=remove_labels)
+        body = {
+            'ids': message_ids,
+            'removeLabelIds': remove_labels,
+            'addLabelIds': add_labels,
+        }
+        from inspect import getargspec
+        self._service.users().messages().batchModify(
+            userId=user_id, fields=fields, body=body)
+        return len(message_ids)
 
 
     def ModifyThreads(self,
@@ -285,7 +291,7 @@ class BoundedExecutor(concurrent.futures.Executor):
         with self._lock:
             self._total_processed += processed
             total = self._total_processed
-        log.info("Successfully updated %s threads (%s cumulatively)!" %
+        log.info("Successfully made %s updates (%s cumulatively)!" %
                  (processed, total))
 
     def __enter__(self):
@@ -343,12 +349,12 @@ def modify_messages_handler(gmail, query, add_labels, remove_labels, max_results
                     'DRYRUN: Not modifying %s messages..' % (len(batch,)))
             else:
                 log.info(
-                    "Sending message modification request for batch of thread_ids.."
+                    "Sending message modification request for batch of message_ids.."
                 )
                 pool.submit(
-                    gmail.ModifyThreads,
+                    gmail.ModifyMessages,
                     # FIXME: Generator expression instead?
-                    [m['id'] for m in batch if t is not None],
+                    [m['id'] for m in batch if m is not None],
                     add_labels=add_labels,
                     remove_labels=remove_labels)
 
