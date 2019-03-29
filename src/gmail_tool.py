@@ -116,7 +116,7 @@ class GmailService(threading.local):
             'addLabelIds': add_labels,
         }
         self._service.users().messages().batchModify(
-            userId=user_id, fields=fields, body=body)
+            userId=user_id, body=body).execute()
         return len(message_ids)
 
 
