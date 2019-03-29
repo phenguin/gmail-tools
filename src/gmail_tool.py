@@ -140,6 +140,7 @@ class GmailService(threading.local):
         return len(thread_ids)
 
     def ListMessages(self,
+                     executor,
                     label_ids=[],
                     query='',
                     user_id='me',
@@ -162,15 +163,17 @@ class GmailService(threading.local):
         try:
             i = 0
             response = get_response()
+            next_response = executor.submit(get_response)
             if 'messages' in response:
                 for message in response['messages']:
                     yield message
                     i += 1
 
             while 'nextPageToken' in response:
+                response = next_response.result()
                 if max_results is not None and i > max_results: break
                 page_token = response['nextPageToken']
-                response = get_response(page_token=page_token)
+                next_response = executor.submit(get_response, page_token)
                 for message in response['messages']:
                     yield message
                     i += 1
@@ -266,9 +269,10 @@ def list_threads_handler(gmail, query, max_results=None):
         print(thread)
 
 def list_messages_handler(gmail, query, max_results=None):
-    messages = gmail.ListMessages(query=query, max_results=max_results)
-    for message in messages:
-        print(message)
+    with BoundedExecutor() as executor:
+        messages = gmail.ListMessages(executor, query=query, max_results=max_results)
+        for message in messages:
+            print(message)
 
 
 class BoundedExecutor(concurrent.futures.Executor):
@@ -288,11 +292,12 @@ class BoundedExecutor(concurrent.futures.Executor):
             log.error("Got exception in done callback!")
             raise future.exception()
         processed = future.result()
-        with self._lock:
-            self._total_processed += processed
-            total = self._total_processed
-        log.info("Successfully made %s updates (%s cumulatively)!" %
-                 (processed, total))
+        if type(processed) is int:
+          with self._lock:
+              self._total_processed += processed
+              total = self._total_processed
+          log.info("Successfully made %s updates (%s cumulatively)!" %
+                  (processed, total))
 
     def __enter__(self):
         self._executor.__enter__()
@@ -341,8 +346,8 @@ def modify_threads_handler(gmail, query, add_labels, remove_labels, max_results,
 def modify_messages_handler(gmail, query, add_labels, remove_labels, max_results,
                            dry_run, batch_size, max_inflight_batches,
                            max_pool_workers):
-    messages = gmail.ListMessages(query=query, max_results=max_results)
     with BoundedExecutor(max_pool_workers, max_inflight_batches) as pool:
+        messages = gmail.ListMessages(pool, query=query, max_results=max_results)
         for batch in _Batched(messages, batch_size=batch_size):
             if dry_run:
                 log.warning(
