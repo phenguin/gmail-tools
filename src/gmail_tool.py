@@ -27,6 +27,9 @@ from googleapiclient.discovery import build
 from googleapiclient.http import HttpRequest
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
+"""
+Performs basic bulk operations on gmail using oauth.
+"""
 
 # If modifying these scopes, delete the file token.pickle.
 SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
@@ -171,11 +174,6 @@ class GmailService(threading.local):
             yield label
 
 
-"""
-Performs basic bulk operations on gmail using oauth.
-"""
-
-
 def create_parser():
     parser = argparse.ArgumentParser()
     parser.set_defaults(action='query')
@@ -298,7 +296,6 @@ def handle(args):
 
 
 def main():
-    print("print in main")
     args = create_parser().parse_args()
     return handle(args)
 
