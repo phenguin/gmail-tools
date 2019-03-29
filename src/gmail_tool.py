@@ -101,6 +101,19 @@ class GmailService(threading.local):
     def ModifyThreadsCallback(self, *args):
         pass
 
+    def ModifyMessages(self,
+                      message_ids,
+                      remove_labels=None,
+                      add_labels=None,
+                      fields='id',
+                      user_id='me'):
+        remove_labels = remove_labels or []
+        add_labels = add_labels or []
+        return self._service.users().messages.batchModify(
+            userId=user_id, fields=fields, ids=message_ids,
+            addLabelIds=add_labels, removeLabelIds=remove_labels)
+
+
     def ModifyThreads(self,
                       thread_ids,
                       remove_labels=None,
@@ -162,7 +175,7 @@ class GmailService(threading.local):
                     label_ids=[],
                     query='',
                     user_id='me',
-                    fields='nextPageToken,messages/id',
+                    fields='nextPageToken,threads/id',
                     max_results=None):
         def get_response(page_token=None):
             log.info(
@@ -222,7 +235,9 @@ def create_parser():
     parser.add_argument(
         '--labels', dest='action', action='store_const', const='labels')
     parser.add_argument(
-        '--modify', dest='action', action='store_const', const='modify')
+        '--modify_threads', dest='action', action='store_const', const='modify_threads')
+    parser.add_argument(
+        '--modify_messages', dest='action', action='store_const', const='modify_messages')
     # Arguments for querying threads.
     parser.add_argument('-q', '--query', type=str, default='')
     parser.add_argument('--max_results', type=int)
@@ -317,6 +332,27 @@ def modify_threads_handler(gmail, query, add_labels, remove_labels, max_results,
                     add_labels=add_labels,
                     remove_labels=remove_labels)
 
+def modify_messages_handler(gmail, query, add_labels, remove_labels, max_results,
+                           dry_run, batch_size, max_inflight_batches,
+                           max_pool_workers):
+    messages = gmail.ListMessages(query=query, max_results=max_results)
+    with BoundedExecutor(max_pool_workers, max_inflight_batches) as pool:
+        for batch in _Batched(messages, batch_size=batch_size):
+            if dry_run:
+                log.warning(
+                    'DRYRUN: Not modifying %s messages..' % (len(batch,)))
+            else:
+                log.info(
+                    "Sending message modification request for batch of thread_ids.."
+                )
+                pool.submit(
+                    gmail.ModifyThreads,
+                    # FIXME: Generator expression instead?
+                    [m['id'] for m in batch if t is not None],
+                    add_labels=add_labels,
+                    remove_labels=remove_labels)
+
+
 
 def handle(args):
     gmail = GmailService()
@@ -328,8 +364,13 @@ def handle(args):
     elif args.action == 'labels':
         for label in gmail.ListLabels():
             print(label)
-    elif args.action == 'modify':
+    elif args.action == 'modify_threads':
         modify_threads_handler(gmail, args.query, args.add_labels,
+                               args.remove_labels, args.max_results,
+                               args.dry_run, args.batch_size,
+                               args.max_inflight_batches, args.max_pool_workers)
+    elif args.action == 'modify_messages':
+        modify_messages_handler(gmail, args.query, args.add_labels,
                                args.remove_labels, args.max_results,
                                args.dry_run, args.batch_size,
                                args.max_inflight_batches, args.max_pool_workers)
