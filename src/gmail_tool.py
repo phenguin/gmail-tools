@@ -120,20 +120,50 @@ class GmailService(threading.local):
         batch.execute()
         return len(thread_ids)
 
+    def ListMessages(self,
+                    label_ids=[],
+                    query='',
+                    user_id='me',
+                    fields='nextPageToken,messages/id',
+                    max_results=None):
+        def get_response(page_token=None):
+            log.info(
+                "Querying gmail for message_ids matching query: %s" % (query,))
+            result = service.users().messages().list(
+                userId=user_id,
+                fields=fields,
+                q=query,
+                labelIds=label_ids,
+                pageToken=page_token).execute(num_retries=5)
+            log.info(
+                "Got %s matching messages back!" % (len(result['messages']),))
+            return result
+
+        service = self._service
+        try:
+            i = 0
+            response = get_response()
+            if 'messages' in response:
+                for message in response['messages']:
+                    yield message
+                    i += 1
+
+            while 'nextPageToken' in response:
+                if max_results is not None and i > max_results: break
+                page_token = response['nextPageToken']
+                response = get_response(page_token=page_token)
+                for message in response['messages']:
+                    yield message
+                    i += 1
+        except apiclient.errors.HttpError, error:
+            log.error('An error occurred: %s' % error)
+
     def ListThreads(self,
                     label_ids=[],
                     query='',
                     user_id='me',
-                    fields='nextPageToken,threads/id',
+                    fields='nextPageToken,messages/id',
                     max_results=None):
-        """List all Threads of the user's mailbox matching the query.
-
-    Returns:
-      Generator yielding threads that match the criteria of the query. Note that the returned
-      list contains Thread IDs, you must use get with the appropriate
-      ID to get the details for a Thread.
-    """
-
         def get_response(page_token=None):
             log.info(
                 "Querying gmail for thread_ids matching query: %s" % (query,))
@@ -185,6 +215,11 @@ def create_parser():
         action='store_const',
         const='list_threads')
     parser.add_argument(
+        '--list_messages',
+        dest='action',
+        action='store_const',
+        const='list_messages')
+    parser.add_argument(
         '--labels', dest='action', action='store_const', const='labels')
     parser.add_argument(
         '--modify', dest='action', action='store_const', const='modify')
@@ -208,6 +243,11 @@ def list_threads_handler(gmail, query, max_results=None):
     threads = gmail.ListThreads(query=query, max_results=max_results)
     for thread in threads:
         print(thread)
+
+def list_messages_handler(gmail, query, max_results=None):
+    messages = gmail.ListMessages(query=query, max_results=max_results)
+    for message in messages:
+        print(message)
 
 
 class BoundedExecutor(concurrent.futures.Executor):
@@ -283,6 +323,8 @@ def handle(args):
 
     if args.action == 'list_threads':
         list_threads_handler(gmail, args.query, args.max_results)
+    if args.action == 'list_messages':
+        list_messages_handler(gmail, args.query, args.max_results)
     elif args.action == 'labels':
         for label in gmail.ListLabels():
             print(label)
